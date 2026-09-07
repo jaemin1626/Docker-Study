@@ -7,6 +7,7 @@ Docker 학습 기록 — 기본 개념, 명령어, 네트워크와 실습을 정
 | 일차 | 내용 |
 | --- | --- |
 | [1일차 — Docker 기본 개념](Day01-Docker-Basics/README.md) | 이미지·컨테이너, Hub·Registry·Desktop·Compose, 이미지 저장, 컨테이너 명령어, 네트워크와 포트 매핑 |
+| [2일차 — Docker Compose, Network, Volume](Day02-Docker-Compose-Network-Volume/README.md) | Compose 실행과 프로젝트 설정, 서비스 이름 통신, 포트 바인딩, Bind Mount·Named Volume, MLOps 활용과 영속성 실습 |
 
 ## 복습 방법
 
