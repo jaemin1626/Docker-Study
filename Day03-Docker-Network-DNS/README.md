@@ -8,7 +8,8 @@ Day02에서 익힌 Compose 서비스 이름 통신을 바탕으로, 네트워크
 2. 사용자 정의 bridge 생성·연결·분리 및 패킷 흐름
 3. host / none / container / overlay 활용
 4. Embedded DNS와 network alias, Compose 서비스 이름
-5. 복습 질문으로 확인
+5. Macvlan과 LAN IP: bridge와 접근 방식 비교
+6. 복습 질문으로 확인
 
 예제는 Linux 컨테이너 기준이다. 명령은 각 실습 절 안에서 순서대로 실행하고, 여러 줄의 `\` 연결은 Bash 문법이다. Docker Desktop에서 Linux 호스트 내부 구조를 확인할 때는 VM 경계를 구분한다. 각 절의 공식 문서 링크에서 세부 조건을 확인할 수 있다.
 
@@ -324,6 +325,135 @@ Nginx가 준비되면 `backend:80`으로 기본 페이지를 조회할 수 있�
 
 따라서 Compose 중심 작업에서는 직접 `--net-alias`를 입력할 일이 상대적으로 적다. 이는 기능을 거의 사용하지 않는다는 통계가 아니라, 기본 서비스 이름으로 대부분의 내부 연결을 표현할 수 있다는 실무 관점이다. 다른 시스템이 기대하는 이름을 유지하거나 네트워크마다 다른 이름을 제공할 때 추가 alias를 고려한다.
 
+## 14. Macvlan: LAN에서 독립된 기기처럼 접근하기
+
+### 14.1 먼저 LAN과 IP부터 이해하기
+
+**LAN(Local Area Network)**은 집이나 사무실처럼 가까운 범위의 기기들을 연결한 네트워크다. 집에서 같은 공유기에 연결된 노트북과 휴대폰을 떠올리면 된다. **IP 주소**는 네트워크에서 통신할 대상을 찾는 주소다.
+
+```text
+집 공유기: 192.168.0.1
+    |
+    +-- 노트북: 192.168.0.20
+    +-- 휴대폰: 192.168.0.21
+    +-- Docker 서버: 192.168.0.10
+```
+
+위 주소처럼 해당 LAN 안에서 사용하는 IP를 여기서는 **LAN IP**라고 부른다. IP는 공유기가 자동으로 할당할 수도 있고, 충돌하지 않도록 직접 설정할 수도 있다. LAN IP는 인터넷 전체에서 바로 접근할 수 있는 공인 IP라는 뜻이 아니다.
+
+### 14.2 기존 컨테이너도 IP를 받는데 무엇이 다를까?
+
+**bridge 컨테이너의 IP도 실제 통신에 쓰이는 주소다.** 가짜 주소와 진짜 주소의 차이가 아니라, **어느 네트워크에 속하고 다른 기기에서 어떤 경로로 접근하느냐**의 차이다.
+
+일반적인 Docker bridge의 기본 설정을 보면:
+
+```text
+집 LAN
+    +-- 노트북: 192.168.0.20
+    |
+    +-- Docker 서버: 192.168.0.10
+            |
+            +-- Docker 내부 bridge 네트워크
+                    +-- 컨테이너: 172.18.0.2:80
+
+노트북 -> 서버 192.168.0.10:8080 -> 포트 매핑 -> 컨테이너 172.18.0.2:80
+```
+
+같은 bridge의 컨테이너끼리는 내부 IP로 통신하지만, LAN의 다른 PC는 기본 설정에서 그 내부 IP로 바로 접근할 수 있도록 구성되어 있지 않다. 따라서 보통 서버 IP와 공개한 포트를 이용한다. 별도 라우팅·방화벽 설정으로 bridge IP 직접 접근을 구성할 수도 있으므로, bridge IP가 원천적으로 접근 불가능한 주소라는 뜻은 아니다. [Docker 포트 공개와 직접 라우팅](https://docs.docker.com/engine/network/port-publishing/)
+
+Macvlan은 호스트의 물리 랜카드를 통해 **컨테이너가 LAN에 별도 기기처럼 나타나게 한다.** 컨테이너 네트워크 인터페이스마다 별도의 **MAC 주소**를 사용한다. MAC은 같은 LAN에서 통신할 때 쓰는 인터페이스의 식별 주소이며, 여기서 Mac은 Apple 컴퓨터를 뜻하지 않는다.
+
+```text
+집 LAN에서 보이는 모습
+    +-- 노트북:       192.168.0.20
+    +-- Docker 서버:  192.168.0.10
+    +-- 컨테이너 A:   192.168.0.201:80  (별도 MAC A)
+    +-- 컨테이너 B:   192.168.0.202:80  (별도 MAC B)
+
+실제 실행 위치와 연결
+Docker 서버의 물리 랜카드
+    +-- Macvlan 인터페이스 A -- 컨테이너 A
+    +-- Macvlan 인터페이스 B -- 컨테이너 B
+
+노트북 -> 컨테이너 A 192.168.0.201:80
+```
+
+컨테이너는 여전히 Docker 서버 안에서 실행되지만, 같은 LAN의 다른 PC는 컨테이너 IP로 직접 접근할 수 있다. 이 경로에는 별도 `-p`가 필요하지 않다. 실제 서비스가 해당 주소·포트에서 수신 중이어야 하고 네트워크 정책도 통신을 허용해야 한다. [Macvlan 공식 문서](https://docs.docker.com/engine/network/drivers/macvlan/)
+
+| 방식 | 다른 PC에서 접근하는 주소 예시 | 컨테이너의 네트워크 공간 |
+| --- | --- | --- |
+| bridge + 포트 매핑 | 서버 `192.168.0.10:8080` | Docker 내부 네트워크에 별도 IP |
+| host | 서버 `192.168.0.10:80` | Host network namespace 공유 |
+| macvlan | 컨테이너 `192.168.0.201:80` | 별도 namespace와 LAN에서 사용할 IP·MAC |
+
+`172`로 시작해서 가상이고 `192`로 시작해서 실제인 것은 아니다. **주소 숫자만으로 bridge와 Macvlan을 구분하지 않는다.** 위 IP들은 설명용 예시다.
+
+### 14.3 생성 명령 예시
+
+아래는 **Linux rootful Docker Engine과 유선 LAN**을 가정한 예시다. 실제 환경의 주소와 랜카드 이름으로 바꿔야 한다.
+
+- `parent=eth0`: Docker 서버에서 LAN에 연결된 물리 랜카드 이름. 실제 이름은 `ip addr`로 확인한다.
+- `--subnet`: 사용할 네트워크 주소 범위. 여기서는 `192.168.0.0/24` LAN을 가정한다.
+- `--gateway`: 다른 네트워크로 나갈 때 사용하는 출구 주소. 여기서는 공유기 `192.168.0.1`이다.
+- `--ip-range`: Docker가 컨테이너에 할당할 범위. 예제의 `192.168.0.200/29` 범위는 **공유기 DHCP 자동 할당에서 제외하고 기존 장비가 사용하지 않도록 미리 확보**했다고 가정한다. Docker가 공유기의 DHCP와 자동으로 조정하지는 않는다.
+
+```bash
+docker network create -d macvlan \
+  --subnet=192.168.0.0/24 \
+  --gateway=192.168.0.1 \
+  --ip-range=192.168.0.200/29 \
+  -o parent=eth0 \
+  day03-macvlan
+
+docker run -d --name day03-macvlan-web \
+  --network day03-macvlan \
+  --ip 192.168.0.201 \
+  nginx:alpine
+
+docker network inspect day03-macvlan
+```
+
+Nginx가 준비되면 **Docker 서버 자신이 아닌 같은 LAN의 다른 PC**에서 확인한다.
+
+```bash
+curl http://192.168.0.201:80
+```
+
+실습 자원 정리는 Docker 서버에서 실행한다.
+
+```bash
+docker rm -f day03-macvlan-web
+docker network rm day03-macvlan
+```
+
+### 14.4 활용과 제한
+
+컨테이너가 LAN의 독립 장비처럼 보여야 하는 기존 서비스나 네트워크 도구에 활용한다. 일반적인 Backend·DB 내부 통신에는 사용자 정의 bridge를 먼저 고려할 수 있다.
+
+- **Host와 Macvlan 컨테이너는 기본적으로 직접 통신하지 못한다.** Linux 커널의 제한이다. Host에도 Macvlan 인터페이스를 만들거나 컨테이너에 bridge 연결을 추가하는 등 별도 구성이 필요하다.
+- 스위치 등 네트워크 장비가 물리 랜카드 하나 뒤의 여러 MAC 주소를 허용해야 한다.
+- Docker Desktop의 Windows/macOS, Windows Docker Engine, rootless 모드에서는 지원하지 않는다. 대부분의 클라우드 제공 환경에서도 제한된다.
+- Macvlan의 기본 모드 이름도 `bridge`지만, 앞서 배운 Docker `bridge` 드라이버와 같은 구성이라는 뜻은 아니다.
+
+지원 조건과 Host 통신 제한은 [Macvlan 공식 문서](https://docs.docker.com/engine/network/drivers/macvlan/)를 참고한다. 이 예제는 환경별 설정이 필요한 학습용 명령이며 실제 실행 검증은 하지 않았다.
+
+### 14.5 헷갈렸던 부분 복습
+
+1. LAN IP는 인터넷 어디서나 접속 가능한 공인 IP일까?
+2. bridge IP는 가짜이고 Macvlan IP만 진짜일까?
+3. Macvlan은 host 모드처럼 Host의 네트워크 공간을 공유할까?
+4. Macvlan 웹 서버에 접속하는 실습을 왜 다른 PC에서 할까?
+
+<details>
+<summary>정답 확인</summary>
+
+1. 아니다. 여기서는 집·회사 내부 LAN에서 쓰는 주소라는 뜻이다.
+2. 둘 다 실제 통신에 쓰는 주소다. 속한 네트워크와 접근 경로가 다르다.
+3. 아니다. Macvlan 컨테이너는 별도 네트워크 공간과 IP·MAC을 사용한다.
+4. Host와 Macvlan 컨테이너는 기본적으로 직접 통신하지 못하기 때문이다.
+
+</details>
+
 ## 핵심 복습
 
 | 개념 | 기억할 내용 |
@@ -334,6 +464,8 @@ Nginx가 준비되면 `backend:80`으로 기본 페이지를 조회할 수 있�
 | none | loopback만 있는 격리 환경, 준비된 파일로 오프라인 작업 |
 | container 모드 | 다른 컨테이너의 IP·localhost·포트 공간 공유 |
 | overlay | Swarm의 여러 Docker Host를 논리 네트워크로 연결 |
+| macvlan | 컨테이너에 별도 MAC과 LAN IP를 구성해 다른 LAN 기기에서 직접 접근 |
+| bridge IP와 LAN IP | 가짜·진짜의 차이가 아니라 속한 네트워크와 접근 경로의 차이 |
 | Embedded DNS | 사용자 정의 네트워크의 `127.0.0.11` resolver |
 | Network alias | 네트워크 범위의 추가 이름, 여러 IP 가능, 요청 분배 보장 없음 |
 | Compose 서비스 이름 | 기본 내부 DNS 이름이므로 별도 alias나 container_name은 필수가 아님 |
