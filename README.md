@@ -10,7 +10,7 @@ Docker 학습 기록 — 기본 개념, 명령어, 네트워크와 실습을 정
 | [2일차 — Docker Compose, Network, Volume](Day02-Docker-Compose-Network-Volume/README.md) | Compose 실행과 프로젝트 설정, 서비스 이름 통신, 포트 바인딩, Bind Mount·Named Volume, MLOps 활용과 영속성 실습 |
 | [3일차 — Docker Network와 DNS Alias](Day03-Docker-Network-DNS/README.md) | 네트워크 모드 비교, 사용자 정의 bridge, namespace·veth 흐름, embedded DNS와 alias 실습 |
 | [4일차 — Compose 통합 복습](Day04-Compose-Review/README.md) | 1·2·3일차 연결, Nginx 여러 페이지, DB·Redis, 데이터 보존, 실행 순서와 scale | 
-
+| [5일차 — Compose 통합 복습](Day05-Docker-DB/README.md) | Docker에서 활용하는 DB 세팅 및 활용 방법 | 
 ## 복습 방법
 
 1. 개념을 읽고 각 명령어가 이미지와 컨테이너 중 무엇을 다루는지 구분합니다.
